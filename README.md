@@ -127,22 +127,18 @@ Nyx eliminates both failure modes through a **Tri-Agent Isolated Workflow (Plann
 
 ---
 
-## MCP Tools Reference
+## Streamlined MCP Tools Reference
 
-The Nyx Memory Server exposes 10 standardized MCP tools via stdio:
+To avoid **Tool Bloat** and minimize context window token overhead, Nyx provides **4 orthogonal, high-performance tools** over stdio:
 
 | Tool Name | Scope | Description |
 | :--- | :--- | :--- |
-| `memory_get_state` | StateMem | Retrieve current valid state units; highlights `[!] NEEDS_RECHECK` flags |
-| `memory_update_state` | StateMem | Insert/update state units; triggers deterministic downstream invalidation |
-| `memory_render_state_block` | StateMem | Render human/LLM-readable markdown snapshot of the state graph |
-| `memory_query_episodic` | Episodic | Query historical logs, previous task executions, and errors via FTS5 |
-| `memory_log_episodic` | Episodic | Record timestamped event milestones into the persistent Event Store |
-| `memory_query_semantic` | Semantic | Query Knowledge Graph nodes (ADRs, Domain Rules) and 1-hop relations |
-| `memory_promote_to_semantic`| Semantic | Promote verified facts from execution reports to permanent knowledge |
-| `memory_hybrid_query` | Hybrid | Route queries between Vector search and Graph traversal with RRF fusion |
-| `memory_sign_context_pack` | Security | Compute HMAC-SHA256 signature for bounded task ContextPacks |
-| `memory_verify_context_pack`| Security | Verify cryptographic authenticity of ContextPacks before execution |
+| `memory_query` | Unified Hybrid Retrieval | Automatically queries Vector Store, Knowledge Graph, and Episodic Events using intelligent intent routing and Reciprocal Rank Fusion (RRF) |
+| `memory_get_state` | State Drift Audit | Retrieve current system state from StateMem graph $G=(U,E)$; highlights `[!] [NEEDS_RECHECK]` flags in Markdown or JSON |
+| `memory_update_state` | StateMem Invalidation | Insert/update state units; triggers deterministic downstream invalidation with cycle detection |
+| `memory_record` | Unified Write Engine | Record information: either execution events/milestones (`type='event'`) or promote verified rules/facts (`type='fact'`) |
+
+> *Note: Cryptographic ContextPack signing (`sign_context_pack` / `verify_context_pack`) and role-based git commits are handled automatically by internal scripts ([git_ops.py](nyx/scripts/git_ops.py)) to prevent LLM tool fatigue.*
 
 ---
 

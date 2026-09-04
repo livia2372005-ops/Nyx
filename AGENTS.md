@@ -11,8 +11,7 @@ Khi người dùng đưa ra một yêu cầu công việc (feature, refactor, bu
 ### Giai đoạn 1: PLANNER (Canvas chính)
 - **Truy vấn Memory**:
   - Gọi công cụ MCP `memory_get_state` để lấy trạng thái hệ thống và kiểm tra các cờ `[!] [NEEDS_RECHECK]`.
-  - Gọi `memory_query_semantic` để nạp Architecture Decisions (ADR) và Domain Rules.
-  - Gọi `memory_query_episodic` để tìm kiếm ngữ cảnh lịch sử các task liên quan.
+  - Gọi `memory_query` để nạp Architecture Decisions (ADR), Domain Rules và bài học từ các task liên quan qua Hybrid Router.
 - **Lập kế hoạch DAG**:
   - Soạn thảo kế hoạch tại `nyx/memory-git/plans/{task_id}/plan.md` với các task có dependency, tiêu chí nghiệm thu rõ ràng.
   - Cập nhật scratchpad: `nyx/working/goal.md` và `nyx/working/plan_summary.md`.
@@ -25,13 +24,13 @@ Khi người dùng đưa ra một yêu cầu công việc (feature, refactor, bu
 - Chỉ nạp nội dung của `ContextPack` tương ứng.
 - Subagent thực thi công việc, chạy test và ghi báo cáo vào `nyx/memory-git/executions/{task_id}/{subtask_id}_report.md`.
 - Trích xuất `new_facts` và commit vào nhánh `exec/{task_id}`.
-- Ghi nhận sự kiện vào Event Store qua `memory_log_episodic`.
+- Ghi nhận sự kiện vào Event Store qua `memory_record(type='event', ...)`.
 
 ### Giai đoạn 3: REVIEWER (Auditor độc lập)
 - Khởi chạy Subagent kiểm toán độc lập đối soát `report.md` với `plan.md`.
 - **Kiểm soát State Drift**: Gọi `memory_get_state` để xác minh không có node nào còn cờ `[!] [NEEDS_RECHECK]` chưa được giải quyết.
 - Lập biên bản nghiệm thu `nyx/memory-git/verifications/{task_id}/verification.md`.
-- Nếu PASS: Merge nhánh `exec/{task_id}` vào `main` và gọi `memory_promote_to_semantic` để thăng cấp các fact mới vào Semantic Memory.
+- Nếu PASS: Merge nhánh `exec/{task_id}` vào `main` và gọi `memory_record(type='fact', ...)` để thăng cấp các fact mới vào Semantic Memory.
 - Nếu FAIL: Báo cáo drift analysis về cho Planner để re-plan.
 
 ---
@@ -41,12 +40,9 @@ Khi người dùng đưa ra một yêu cầu công việc (feature, refactor, bu
 
 ---
 
-## 3. Công Cụ & Bộ Nhớ Nyx MCP Sẵn Có
-Agent có toàn quyền sử dụng bộ công cụ MCP cục bộ:
-- `memory_get_state(state_unit_ids)`
-- `memory_update_state(updates)`
-- `memory_render_state_block()`
-- `memory_query_episodic(query, limit, task_id)`
-- `memory_log_episodic(event_type, content, task_id, tags)`
-- `memory_query_semantic(query, entity_types, limit)`
-- `memory_promote_to_semantic(facts)`
+## 3. Bộ 4 Công Cụ MCP Tinh Gọn Của Nyx
+Agent có toàn quyền sử dụng 4 công cụ MCP chuẩn hóa:
+1. `memory_query(query, limit, scope)`: Tra cứu tri thức thống nhất (tự động điều hướng Vector, Graph, Events).
+2. `memory_get_state(state_unit_ids, format)`: Lấy snapshot đồ thị trạng thái $G=(U,E)$ và kiểm tra State Drift.
+3. `memory_update_state(updates)`: Cập nhật StateMem, tự động lan truyền cờ `[!] [NEEDS_RECHECK]` & phát hiện chu trình.
+4. `memory_record(type, data, task_id, agent_role, tags)`: Ghi nhận sự kiện thực thi (`type='event'`) hoặc thăng cấp fact (`type='fact'`).

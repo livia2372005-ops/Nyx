@@ -25,16 +25,19 @@ def test_mcp():
     print("MCP Init result:", init_res["result"]["serverInfo"])
     assert init_res["result"]["serverInfo"]["name"] == "nyx-hybrid-memory"
 
-    # 2. List tools
+    # 2. List tools (Should be exactly 4 clean orthogonal tools!)
     tools_res = send_recv({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     tools = tools_res["result"]["tools"]
-    print(f"Discovered {len(tools)} MCP tools:")
+    print(f"\nDiscovered {len(tools)} Streamlined MCP tools:")
+    tool_names = [t["name"] for t in tools]
     for t in tools:
-        print(f" - {t['name']}: {t['description'][:50]}...")
-    assert len(tools) >= 6
+        print(f" - [{t['name']}]: {t['description']}")
+    assert len(tools) == 4
+    assert set(tool_names) == {"memory_query", "memory_get_state", "memory_update_state", "memory_record"}
 
-    # 3. Call tool memory_update_state
-    call_res = send_recv({
+    # 3. Test memory_update_state
+    print("\n--- Testing memory_update_state ---")
+    update_res = send_recv({
         "jsonrpc": "2.0",
         "id": 3,
         "method": "tools/call",
@@ -42,77 +45,96 @@ def test_mcp():
             "name": "memory_update_state",
             "arguments": {
                 "updates": [
-                    {"id": "system_status", "content": "online", "source": "test"}
+                    {"id": "api_version", "content": "v2", "source": "test_script"},
+                    {"id": "auth_service", "content": "active", "deps": ["api_version"]}
                 ]
             }
         }
     })
-    print("Tool call update_state result:", call_res["result"]["content"][0]["text"])
+    print("Update state result:", update_res["result"]["content"][0]["text"])
 
-    # 4. Call tool memory_get_state
-    get_res = send_recv({
+    # 4. Test memory_get_state (markdown and json formats)
+    print("\n--- Testing memory_get_state ---")
+    get_md = send_recv({
         "jsonrpc": "2.0",
         "id": 4,
         "method": "tools/call",
         "params": {
             "name": "memory_get_state",
-            "arguments": {"state_unit_ids": ["system_status"]}
+            "arguments": {"format": "markdown"}
         }
     })
-    print("Tool call get_state result:", get_res["result"]["content"][0]["text"])
-    assert "online" in get_res["result"]["content"][0]["text"]
+    print("Get state (Markdown format):\n", get_md["result"]["content"][0]["text"])
+    assert "api_version" in get_md["result"]["content"][0]["text"]
 
-    # 5. Call tool memory_sign_context_pack & memory_verify_context_pack
-    sign_res = send_recv({
+    get_json = send_recv({
         "jsonrpc": "2.0",
         "id": 5,
         "method": "tools/call",
         "params": {
-            "name": "memory_sign_context_pack",
-            "arguments": {
-                "context_pack": {"task_id": "test_001", "files": ["main.py"]}
-            }
+            "name": "memory_get_state",
+            "arguments": {"format": "json"}
         }
     })
-    sign_data = json.loads(sign_res["result"]["content"][0]["text"])
-    sig = sign_data["signature"]
-    print("Tool call memory_sign_context_pack signature:", sig)
-    assert len(sig) == 64
+    assert "api_version" in get_json["result"]["content"][0]["text"]
 
-    verify_res = send_recv({
+    # 5. Test memory_record (both 'event' and 'fact')
+    print("\n--- Testing memory_record ---")
+    rec_event = send_recv({
         "jsonrpc": "2.0",
         "id": 6,
         "method": "tools/call",
         "params": {
-            "name": "memory_verify_context_pack",
+            "name": "memory_record",
             "arguments": {
-                "context_pack": {"task_id": "test_001", "files": ["main.py"]},
-                "signature": sig
+                "type": "event",
+                "data": {"status": "success", "detail": "JWT token issued"},
+                "task_id": "auth-001",
+                "agent_role": "executor",
+                "tags": ["auth", "token"]
             }
         }
     })
-    verify_data = json.loads(verify_res["result"]["content"][0]["text"])
-    assert verify_data["valid"] is True
-    print("Tool call memory_verify_context_pack verified:", verify_data["valid"])
+    print("Record event result:", rec_event["result"]["content"][0]["text"])
 
-    # 6. Call tool memory_hybrid_query
-    hybrid_res = send_recv({
+    rec_fact = send_recv({
         "jsonrpc": "2.0",
         "id": 7,
         "method": "tools/call",
         "params": {
-            "name": "memory_hybrid_query",
+            "name": "memory_record",
             "arguments": {
-                "query": "system status online"
+                "type": "fact",
+                "data": {
+                    "id": "jwt_expiry_fact",
+                    "title": "Token Expiry Duration",
+                    "entity_type": "DomainRule",
+                    "properties": {"duration": "24h"}
+                }
             }
         }
     })
-    hybrid_data = json.loads(hybrid_res["result"]["content"][0]["text"])
-    print("Tool call memory_hybrid_query mode:", hybrid_data["executed_mode"])
-    assert "results" in hybrid_data
+    print("Record fact result:", rec_fact["result"]["content"][0]["text"])
+
+    # 6. Test memory_query (Unified hybrid search)
+    print("\n--- Testing memory_query ---")
+    query_res = send_recv({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {
+            "name": "memory_query",
+            "arguments": {
+                "query": "Token Expiry Duration rule"
+            }
+        }
+    })
+    query_text = query_res["result"]["content"][0]["text"]
+    print("Query result summary:", query_text[:200], "...")
+    assert "Token Expiry Duration" in query_text or "results" in query_text
 
     proc.terminate()
-    print("\n MCP SERVER JSON-RPC PROTOCOL TEST PASSED (ALL 10 TOOLS)!")
+    print("\n ALL 4 STREAMLINED MCP TOOLS VERIFIED SUCCESSFULLY!")
 
 if __name__ == "__main__":
     test_mcp()

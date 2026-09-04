@@ -13,14 +13,11 @@ Trước khi bắt đầu, hãy đảm bảo hệ thống đã sẵn sàng:
    ```bash
    python nyx/scripts/init_nyx.py
    ```
-3. **Công cụ MCP**: Sử dụng các tool bộ nhớ của Nyx:
-   - `memory_get_state`: Lấy trạng thái hiện tại từ StateMem (chú ý cờ `needs_recheck`).
-   - `memory_update_state`: Cập nhật trạng thái mới & tự động kích hoạt lan truyền invalidation.
-   - `memory_render_state_block`: Tạo khối markdown tóm tắt state cho prompt.
-   - `memory_query_semantic`: Truy vấn các quyết định kiến trúc (ADR) và quy tắc nghiệp vụ.
-   - `memory_query_episodic`: Truy vấn bài học kinh nghiệm từ các task trước.
-   - `memory_log_episodic`: Ghi nhận sự kiện thực thi theo mốc thời gian.
-   - `memory_promote_to_semantic`: Thăng cấp fact đã qua kiểm duyệt vào Semantic Knowledge Graph.
+3. **Bộ 4 Công cụ MCP Tinh Gọn**:
+   - `memory_query(query, limit, scope)`: Tra cứu tri thức thống nhất (tự động điều hướng Vector, Graph, Events).
+   - `memory_get_state(state_unit_ids, format)`: Lấy trạng thái hiện tại từ StateMem (chú ý cờ `[!] [NEEDS_RECHECK]`).
+   - `memory_update_state(updates)`: Cập nhật trạng thái mới & tự động kích hoạt lan truyền invalidation.
+   - `memory_record(type, data, task_id, agent_role, tags)`: Ghi nhận sự kiện (`type='event'`) hoặc thăng cấp fact (`type='fact'`).
 
 ---
 
@@ -37,9 +34,8 @@ User Goal ──► [1. PLANNER] ──(ContextPack)──► [2. EXECUTOR] ─�
 ### Giai đoạn 1: PLANNER (Đóng vai trò hiện tại trong Canvas chính)
 *Mục tiêu*: Phân tích yêu cầu, tra cứu tri thức & lập kế hoạch DAG có cô lập ngữ cảnh.
 1. **Truy vấn Memory**:
-   - Gọi `memory_query_semantic` để nạp Architecture Decisions và Domain Rules liên quan.
-   - Gọi `memory_query_episodic` tìm các task tương tự đã làm.
-   - Gọi `memory_get_state` kiểm tra các state unit hiện có.
+   - Gọi `memory_query` để nạp Architecture Decisions và Domain Rules liên quan qua Hybrid Router.
+   - Gọi `memory_get_state` kiểm tra các state unit hiện có và phát hiện state drift.
 2. **Lập Kế hoạch DAG**:
    - Viết kế hoạch vào `nyx/memory-git/plans/{task_id}/plan.md` với các task có dependency rõ ràng, tiêu chí thành công (Success Criteria) và ràng buộc (Constraints).
    - Cập nhật `nyx/working/goal.md` và `nyx/working/plan_summary.md`.
@@ -59,19 +55,19 @@ User Goal ──► [1. PLANNER] ──(ContextPack)──► [2. EXECUTOR] ─�
    - Ghi báo cáo vào `nyx/memory-git/executions/{task_id}/{subtask_id}_report.md`.
    - Trích xuất các fact mới vào `new_facts` (schema: `id`, `content`, `deps`).
 4. Commit thay đổi vào branch `exec/{task_id}`.
-5. Ghi log sự kiện qua `memory_log_episodic`.
+5. Ghi log sự kiện qua `memory_record(type='event', ...)`.
 
 ### Giai đoạn 3: REVIEWER (Auditor Độc Lập)
 *Mục tiêu*: Nghiệm thu khách quan và chống State Drift.
 1. Khởi tạo Subagent đóng vai **Auditor** (hoặc thực hiện phiên audit độc lập):
-   - Nạp `plan.md`, `report.md` và gọi `memory_get_state`.
+   - Nạp `plan.md`, `report.md` và gọi `memory_get_state(format='markdown')`.
 2. **Kiểm tra State Drift (Cực kỳ quan trọng)**:
    - Kiểm tra xem việc thực thi có làm bất kỳ state unit nào bị đánh dấu `[!] [NEEDS_RECHECK]` hay không.
    - Nếu có, đảm bảo các giá trị phụ thuộc đã được recompute chính xác.
 3. Tạo file `nyx/memory-git/verifications/{task_id}/verification.md`:
    - Nếu **PASS**:
      - Merge branch `exec/{task_id}` vào `main`.
-     - Gọi `memory_promote_to_semantic` để đưa các fact mới được duyệt vào Semantic Knowledge Graph.
+     - Gọi `memory_record(type='fact', ...)` để đưa các fact mới được duyệt vào Semantic Knowledge Graph.
      - Cập nhật `nyx/working/recent_results.md`.
    - Nếu **FAIL**:
      - Phân tích nguyên nhân drift/sai lệch và chuyển lại cho **Planner** để re-plan.

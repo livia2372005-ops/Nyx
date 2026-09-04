@@ -12,14 +12,12 @@ if __package__ in (None, ""):
     from nyx.mcp_server.episodic import EpisodicMemoryEngine
     from nyx.mcp_server.semantic import SemanticMemoryEngine
     from nyx.mcp_server.hybrid_router import HybridRouter
-    from nyx.scripts.git_ops import sign_context_pack, verify_context_pack
 else:
     from .db import init_db, DEFAULT_DB_PATH
     from .state_mem import StateMemEngine
     from .episodic import EpisodicMemoryEngine
     from .semantic import SemanticMemoryEngine
     from .hybrid_router import HybridRouter
-    from ..scripts.git_ops import sign_context_pack, verify_context_pack
 
 # Ensure UTF-8 output
 sys.stdout.reconfigure(encoding="utf-8")
@@ -27,26 +25,53 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 TOOLS_DEFINITIONS = [
     {
+        "name": "memory_query",
+        "description": "Unified hybrid retrieval tool. Automatically queries Vector Store, Knowledge Graph, and Episodic Events using intelligent intent routing and Reciprocal Rank Fusion (RRF).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search question, topic, or entity name"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Maximum items to return"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["all", "semantic", "episodic"],
+                    "default": "all",
+                    "description": "Search scope: 'all' (hybrid vector+graph), 'semantic' (rules/architecture), or 'episodic' (past task history)"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "memory_get_state",
-        "description": "Get current valid state for state unit IDs or all active state units. Returns values, dependencies, and flags any units needing recheck.",
+        "description": "Retrieve current valid state from StateMem dependency graph G=(U,E). Highlights any [!] [NEEDS_RECHECK] flags to eliminate State Drift.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "state_unit_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional list of state unit IDs to retrieve. If omitted, retrieves all active units."
+                    "description": "Optional list of state unit IDs. If omitted, retrieves all active state units."
                 },
-                "include_all": {
-                    "type": "boolean",
-                    "description": "If true, also includes superseded historical state units."
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "json"],
+                    "default": "markdown",
+                    "description": "Output format: 'markdown' (formatted prompt block with warnings) or 'json' (raw dictionary)"
                 }
             }
         }
     },
     {
         "name": "memory_update_state",
-        "description": "Insert or update state units in StateMem. Automatically propagates 'needs_recheck' to all dependent units downstream to eliminate State Drift.",
+        "description": "Insert or update state units in StateMem. Automatically propagates [!] [NEEDS_RECHECK] downstream to all dependent units to prevent State Drift. Enforces cycle detection.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -56,11 +81,11 @@ TOOLS_DEFINITIONS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string", "description": "Unique key (e.g. 'auth_method', 'db_schema_version')"},
+                            "id": {"type": "string", "description": "Unique state key (e.g. 'auth_method', 'db_schema_version')"},
                             "content": {"description": "Current value or structured dictionary"},
-                            "priority": {"type": "integer", "description": "Priority 1 (highest) to 5 (lowest)"},
-                            "source": {"type": "string", "description": "Origin file/commit (e.g. 'plan.md#L12')"},
-                            "deps": {"type": "array", "items": {"type": "string"}, "description": "IDs of parent units this unit depends on"},
+                            "priority": {"type": "integer", "description": "Priority 1 (high) to 5 (low)"},
+                            "source": {"type": "string", "description": "Origin file/task (e.g. 'plan.md#L12')"},
+                            "deps": {"type": "array", "items": {"type": "string"}, "description": "IDs of state units this unit depends on"},
                             "status": {"type": "string", "enum": ["active", "superseded", "needs_recheck"]}
                         },
                         "required": ["id", "content"]
@@ -71,138 +96,35 @@ TOOLS_DEFINITIONS = [
         }
     },
     {
-        "name": "memory_render_state_block",
-        "description": "Render a cohesive markdown block of current active states with warning flags for invalidated dependencies, suitable for prompt inclusion.",
+        "name": "memory_record",
+        "description": "Record information into memory: either log an execution event/milestone (type='event') or promote a verified fact/rule to the Semantic Knowledge Graph (type='fact').",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "state_unit_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional specific unit IDs to render."
-                }
-            }
-        }
-    },
-    {
-        "name": "memory_query_episodic",
-        "description": "Query episodic memory for past events, task execution reports, logs, and historical context.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search term or keyword (uses FTS5)"},
-                "limit": {"type": "integer", "default": 5},
-                "task_id": {"type": "string", "description": "Filter by task ID"},
-                "session_id": {"type": "string", "description": "Filter by session ID"},
-                "agent_role": {"type": "string", "description": "Filter by role ('planner', 'executor', 'reviewer')"}
-            }
-        }
-    },
-    {
-        "name": "memory_log_episodic",
-        "description": "Record a timestamped episodic event, step result, or milestone into the Event Store.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "event_type": {"type": "string", "description": "Event type (e.g. 'task_executed', 'plan_created', 'drift_detected')"},
-                "content": {"description": "Structured data or markdown text of the event"},
-                "task_id": {"type": "string", "description": "Associated task ID"},
-                "agent_role": {"type": "string", "description": "Role of the executing agent"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "List of search tags"}
-            },
-            "required": ["event_type", "content"]
-        }
-    },
-    {
-        "name": "memory_query_semantic",
-        "description": "Query semantic memory (Knowledge Graph + Rules) for architectural decisions, domain rules, and entity relationships.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search term to match node titles and properties"},
-                "entity_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional filter (e.g. ['ArchitectureDecision', 'DomainRule', 'Convention'])"
-                },
-                "limit": {"type": "integer", "default": 5},
-                "include_relations": {"type": "boolean", "default": True, "description": "Include 1-hop connected graph relations"}
-            }
-        }
-    },
-    {
-        "name": "memory_promote_to_semantic",
-        "description": "Promote verified facts, rules, or architectural decisions into permanent Semantic Knowledge Graph.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "facts": {
-                    "type": "array",
-                    "description": "List of facts to promote.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string", "description": "Identifier for the semantic node"},
-                            "entity_type": {"type": "string", "description": "Node type (ArchitectureDecision, DomainRule, Fact)"},
-                            "title": {"type": "string", "description": "Short human-readable title"},
-                            "properties": {"type": "object", "description": "Detailed properties/rules"},
-                            "relations": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "target_id": {"type": "string"},
-                                        "rel_type": {"type": "string"}
-                                    },
-                                    "required": ["target_id", "rel_type"]
-                                }
-                            }
-                        },
-                        "required": ["id", "title"]
-                    }
-                }
-            },
-            "required": ["facts"]
-        }
-    },
-    {
-        "name": "memory_hybrid_query",
-        "description": "Intelligent hybrid retrieval router. Classifies intent (vector similarity vs graph traversal) and fuses results using Reciprocal Rank Fusion (RRF).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query or natural language question"},
-                "limit": {"type": "integer", "default": 5},
-                "mode": {
+                "type": {
                     "type": "string",
-                    "enum": ["auto", "vector_path", "graph_path", "hybrid_fusion"],
-                    "description": "Optional force execution mode (default: 'auto')"
+                    "enum": ["event", "fact"],
+                    "description": "'event' for task execution logs/milestones; 'fact' for verified rules or architectural decisions"
+                },
+                "data": {
+                    "type": "object",
+                    "description": "For 'event': {event_type, content, ...}. For 'fact': {id, title, entity_type, properties, relations, ...}"
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Associated task ID"
+                },
+                "agent_role": {
+                    "type": "string",
+                    "description": "Role of calling agent ('planner', 'executor', 'reviewer')"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional search tags"
                 }
             },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "memory_sign_context_pack",
-        "description": "Cryptographically sign a ContextPack dictionary with HMAC-SHA256 so Executor can verify integrity.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "context_pack": {"type": "object", "description": "ContextPack data to sign"}
-            },
-            "required": ["context_pack"]
-        }
-    },
-    {
-        "name": "memory_verify_context_pack",
-        "description": "Verify cryptographic signature of a ContextPack to ensure it was created by Planner without tampering.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "context_pack": {"type": "object", "description": "ContextPack data"},
-                "signature": {"type": "string", "description": "Expected cryptographic signature"}
-            },
-            "required": ["context_pack", "signature"]
+            "required": ["type", "data"]
         }
     }
 ]
@@ -218,79 +140,79 @@ class NyxMcpServer:
 
     def handle_call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            if name == "memory_get_state":
-                res = self.state_mem.get_state(
-                    unit_ids=arguments.get("state_unit_ids"),
-                    include_all=arguments.get("include_all", False)
-                )
+            # 1. UNIFIED QUERY
+            if name == "memory_query":
+                query_text = arguments["query"]
+                limit = arguments.get("limit", 5)
+                scope = arguments.get("scope", "all")
+
+                if scope == "episodic":
+                    res = self.episodic.query_events(query=query_text, limit=limit)
+                elif scope == "semantic":
+                    res = self.semantic.query_semantic(query=query_text, limit=limit)
+                else:
+                    res = self.hybrid_router.query(query=query_text, limit=limit)
+
                 return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
+            # 2. GET STATE (with Markdown / JSON formatting)
+            elif name == "memory_get_state":
+                fmt = arguments.get("format", "markdown")
+                unit_ids = arguments.get("state_unit_ids")
+
+                if fmt == "json":
+                    res = self.state_mem.get_state(unit_ids=unit_ids, include_all=False)
+                    return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
+                else:
+                    rendered = self.state_mem.render_state_block(unit_ids=unit_ids)
+                    return {"content": [{"type": "text", "text": rendered}]}
+
+            # 3. UPDATE STATE (StateMem Invalidation & Cycle Detection)
             elif name == "memory_update_state":
                 res = self.state_mem.update_state(arguments.get("updates", []))
                 return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
-            elif name == "memory_render_state_block":
-                rendered = self.state_mem.render_state_block(unit_ids=arguments.get("state_unit_ids"))
-                return {"content": [{"type": "text", "text": rendered}]}
+            # 4. RECORD (Events or Facts)
+            elif name == "memory_record":
+                rec_type = arguments["type"]
+                data = arguments["data"]
+                task_id = arguments.get("task_id")
+                agent_role = arguments.get("agent_role")
+                tags = arguments.get("tags")
 
-            elif name == "memory_query_episodic":
-                res = self.episodic.query_events(
-                    query=arguments.get("query", ""),
-                    limit=arguments.get("limit", 5),
-                    task_id=arguments.get("task_id"),
-                    session_id=arguments.get("session_id"),
-                    agent_role=arguments.get("agent_role")
-                )
-                return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
+                if rec_type == "event":
+                    event_type = data.get("event_type", "milestone")
+                    content = data.get("content", data)
+                    eid = self.episodic.log_event(
+                        event_type=event_type,
+                        content=content,
+                        task_id=task_id,
+                        agent_role=agent_role,
+                        tags=tags
+                    )
+                    return {"content": [{"type": "text", "text": json.dumps({"success": True, "event_id": eid, "type": "event"})}]}
 
-            elif name == "memory_log_episodic":
-                eid = self.episodic.log_event(
-                    event_type=arguments["event_type"],
-                    content=arguments["content"],
-                    task_id=arguments.get("task_id"),
-                    agent_role=arguments.get("agent_role"),
-                    tags=arguments.get("tags")
-                )
-                return {"content": [{"type": "text", "text": json.dumps({"success": True, "event_id": eid})}]}
+                elif rec_type == "fact":
+                    facts = [data] if (isinstance(data, dict) and ("id" in data or "key" in data)) else data.get("facts", [data])
+                    res = self.semantic.promote_facts(facts)
+                    return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
-            elif name == "memory_query_semantic":
-                res = self.semantic.query_semantic(
-                    query=arguments.get("query", ""),
-                    entity_types=arguments.get("entity_types"),
-                    limit=arguments.get("limit", 5),
-                    include_relations=arguments.get("include_relations", True)
-                )
-                return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
-
-            elif name == "memory_promote_to_semantic":
-                res = self.semantic.promote_facts(arguments.get("facts", []))
-                return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
-
-            elif name == "memory_hybrid_query":
-                res = self.hybrid_router.query(
-                    query=arguments["query"],
-                    limit=arguments.get("limit", 5),
-                    forced_mode=arguments.get("mode")
-                )
-                return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
-
-            elif name == "memory_sign_context_pack":
-                sig = sign_context_pack(arguments["context_pack"])
-                return {"content": [{"type": "text", "text": json.dumps({"signature": sig, "success": True})}]}
-
-            elif name == "memory_verify_context_pack":
-                is_valid = verify_context_pack(arguments["context_pack"], arguments["signature"])
-                return {"content": [{"type": "text", "text": json.dumps({"valid": is_valid})}]}
+                else:
+                    return {
+                        "isError": True,
+                        "content": [{"type": "text", "text": f"Unsupported record type: {rec_type}. Must be 'event' or 'fact'."}]
+                    }
 
             else:
                 return {
                     "isError": True,
-                    "content": [{"type": "text", "text": f"Unknown tool: {name}"}]
+                    "content": [{"type": "text", "text": f"Unknown tool: {name}. Available tools: memory_query, memory_get_state, memory_update_state, memory_record"}]
                 }
+
         except Exception as e:
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": f"Error executing tool {name}: {str(e)}"}]
+                "content": [{"type": "text", "text": f"Error executing {name}: {str(e)}"}]
             }
 
     def run_stdio(self):
@@ -319,7 +241,7 @@ class NyxMcpServer:
                         },
                         "serverInfo": {
                             "name": "nyx-hybrid-memory",
-                            "version": "1.0.0"
+                            "version": "2.0.0"
                         }
                     }
                 }
@@ -327,7 +249,6 @@ class NyxMcpServer:
                 sys.stdout.flush()
 
             elif method == "notifications/initialized":
-                # No response needed for notification
                 pass
 
             elif method == "tools/list":
@@ -376,7 +297,7 @@ class NyxMcpServer:
                     sys.stdout.flush()
 
 def main():
-    parser = argparse.ArgumentParser(description="Nyx Hybrid Memory MCP Server")
+    parser = argparse.ArgumentParser(description="Nyx Hybrid Memory MCP Server (Streamlined Edition)")
     parser.add_argument("--db", type=str, default=None, help="Path to SQLite memory database")
     args = parser.parse_args()
 
