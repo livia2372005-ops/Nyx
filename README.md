@@ -142,6 +142,26 @@ To avoid **Tool Bloat** and minimize context window token overhead, Nyx provides
 
 ---
 
+## Live Observability & Mission Control Monitor
+
+To ensure full transparency into how the Agent interacts with the Nyx Memory System, you have 3 real-time monitoring channels:
+
+### 1. Terminal Mission Control Monitor
+Run the live dashboard in a side terminal to watch StateMem graph transitions and streaming tool calls:
+```bash
+python nyx/scripts/monitor.py
+```
+- **StateMem Snapshot Panel**: Visualizes active states and immediately highlights `▲ NEEDS_RECHECK` flags in red when state drift occurs.
+- **Activity Stream Panel**: Displays incoming tool calls (`memory_query`, `memory_get_state`, `memory_update_state`, `memory_record`) with parameters and results in real time.
+
+### 2. Activity Logs
+- Structured logs are continuously recorded to `nyx/logs/activity.log` and `nyx/logs/activity.jsonl`.
+
+### 3. In-Chat Telemetry
+Per [AGENTS.md](AGENTS.md), the Agent outputs a live telemetry block directly into the chat response whenever it interacts with memory.
+
+---
+
 ## Getting Started
 
 ### 1. Installation
@@ -160,7 +180,7 @@ python nyx/scripts/test_mcp_server.py
 ```
 
 ### 3. Usage with Google Antigravity
-With [AGENTS.md](file:///d:/App/Noname/AGENTS.md) residing at the project root, **no special flags or `@` mentions are necessary**.
+With [AGENTS.md](AGENTS.md) residing at the project root, **no special flags or `@` mentions are necessary**.
 
 Simply submit any task through the Antigravity chat interface:
 > *"Refactor user authentication to JWT with RS256 signing and update middleware"*

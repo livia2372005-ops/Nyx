@@ -4,6 +4,7 @@ import os
 import argparse
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -138,6 +139,33 @@ class NyxMcpServer:
         self.semantic = SemanticMemoryEngine(self.db_path)
         self.hybrid_router = HybridRouter(self.db_path)
 
+    def _log_activity(self, tool_name: str, arguments: dict, result_summary: str, is_error: bool = False):
+        try:
+            log_dir = Path(__file__).resolve().parent.parent / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            now_local = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            status_badge = "[ERROR]" if is_error else "[OK]"
+            entry = f"[{now_local}] {status_badge} TOOL: {tool_name}\n"
+            entry += f"   ├── Args: {json.dumps(arguments, ensure_ascii=False)}\n"
+            entry += f"   └── Result: {result_summary}\n\n"
+
+            with open(log_dir / "activity.log", "a", encoding="utf-8") as f:
+                f.write(entry)
+
+            json_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "local_time": now_local,
+                "tool": tool_name,
+                "arguments": arguments,
+                "summary": result_summary,
+                "is_error": is_error
+            }
+            with open(log_dir / "activity.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(json_entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def handle_call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             # 1. UNIFIED QUERY
@@ -148,11 +176,15 @@ class NyxMcpServer:
 
                 if scope == "episodic":
                     res = self.episodic.query_events(query=query_text, limit=limit)
+                    summary = f"Episodic query '{query_text}' -> {len(res)} events"
                 elif scope == "semantic":
                     res = self.semantic.query_semantic(query=query_text, limit=limit)
+                    summary = f"Semantic query '{query_text}' -> {len(res)} nodes"
                 else:
                     res = self.hybrid_router.query(query=query_text, limit=limit)
+                    summary = f"Hybrid query '{query_text}' -> Mode: {res.get('executed_mode')}, Matches: {res.get('total_matches')}"
 
+                self._log_activity(name, arguments, summary)
                 return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
             # 2. GET STATE (with Markdown / JSON formatting)
@@ -162,14 +194,22 @@ class NyxMcpServer:
 
                 if fmt == "json":
                     res = self.state_mem.get_state(unit_ids=unit_ids, include_all=False)
+                    drift_count = sum(1 for u in res.values() if u["status"] == "needs_recheck")
+                    summary = f"Fetched {len(res)} state units (JSON), Drift flags: {drift_count}"
+                    self._log_activity(name, arguments, summary)
                     return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
                 else:
                     rendered = self.state_mem.render_state_block(unit_ids=unit_ids)
+                    has_drift = "[NEEDS_RECHECK" in rendered
+                    summary = f"Rendered state block (Markdown). State drift detected: {has_drift}"
+                    self._log_activity(name, arguments, summary)
                     return {"content": [{"type": "text", "text": rendered}]}
 
             # 3. UPDATE STATE (StateMem Invalidation & Cycle Detection)
             elif name == "memory_update_state":
                 res = self.state_mem.update_state(arguments.get("updates", []))
+                summary = f"Updated {res.get('updated_count')} units. Invalidated downstream: {res.get('invalidated_ids')}"
+                self._log_activity(name, arguments, summary)
                 return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
             # 4. RECORD (Events or Facts)
@@ -190,29 +230,39 @@ class NyxMcpServer:
                         agent_role=agent_role,
                         tags=tags
                     )
+                    summary = f"Logged episodic event '{event_type}' (id={eid}) by role '{agent_role}'"
+                    self._log_activity(name, arguments, summary)
                     return {"content": [{"type": "text", "text": json.dumps({"success": True, "event_id": eid, "type": "event"})}]}
 
                 elif rec_type == "fact":
                     facts = [data] if (isinstance(data, dict) and ("id" in data or "key" in data)) else data.get("facts", [data])
                     res = self.semantic.promote_facts(facts)
+                    summary = f"Promoted {res.get('promoted_count')} facts to Knowledge Graph: {res.get('promoted_ids')}"
+                    self._log_activity(name, arguments, summary)
                     return {"content": [{"type": "text", "text": json.dumps(res, indent=2, ensure_ascii=False)}]}
 
                 else:
+                    msg = f"Unsupported record type: {rec_type}. Must be 'event' or 'fact'."
+                    self._log_activity(name, arguments, msg, is_error=True)
                     return {
                         "isError": True,
-                        "content": [{"type": "text", "text": f"Unsupported record type: {rec_type}. Must be 'event' or 'fact'."}]
+                        "content": [{"type": "text", "text": msg}]
                     }
 
             else:
+                msg = f"Unknown tool: {name}. Available tools: memory_query, memory_get_state, memory_update_state, memory_record"
+                self._log_activity(name, arguments, msg, is_error=True)
                 return {
                     "isError": True,
-                    "content": [{"type": "text", "text": f"Unknown tool: {name}. Available tools: memory_query, memory_get_state, memory_update_state, memory_record"}]
+                    "content": [{"type": "text", "text": msg}]
                 }
 
         except Exception as e:
+            err_msg = f"Error executing {name}: {str(e)}"
+            self._log_activity(name, arguments, err_msg, is_error=True)
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": f"Error executing {name}: {str(e)}"}]
+                "content": [{"type": "text", "text": err_msg}]
             }
 
     def run_stdio(self):

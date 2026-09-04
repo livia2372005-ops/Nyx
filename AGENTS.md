@@ -46,3 +46,16 @@ Agent có toàn quyền sử dụng 4 công cụ MCP chuẩn hóa:
 2. `memory_get_state(state_unit_ids, format)`: Lấy snapshot đồ thị trạng thái $G=(U,E)$ và kiểm tra State Drift.
 3. `memory_update_state(updates)`: Cập nhật StateMem, tự động lan truyền cờ `[!] [NEEDS_RECHECK]` & phát hiện chu trình.
 4. `memory_record(type, data, task_id, agent_role, tags)`: Ghi nhận sự kiện thực thi (`type='event'`) hoặc thăng cấp fact (`type='fact'`).
+
+---
+
+## 4. Minh Bạch Trực Quan (Live Observability & In-Chat Telemetry)
+Để người dùng luôn kiểm soát và quan sát được Agent có thực sự dùng Nyx hay không:
+- **In-Chat Telemetry**: Mỗi khi Agent thực hiện thao tác bộ nhớ, Agent **PHẢI** đính kèm một khối Callout ngắn trong phản hồi:
+  > 🛰️ **[Nyx Telemetry]**
+  > - **Công cụ đã gọi**: `memory_query(...)` hoặc `memory_get_state(...)`
+  > - **Trạng thái**: `[OK] 0 drift` (hoặc cảnh báo drift nếu có)
+  > - **Hành động**: Tóm tắt bước kế tiếp của Planner/Executor/Reviewer.
+- **Mission Control Dashboard**: Người dùng có thể mở terminal phụ và chạy:
+  `python nyx/scripts/monitor.py` để theo dõi đồ thị StateMem và stream hoạt động theo thời gian thực.
+- **File Log Chi Tiết**: Ghi vết tại `nyx/logs/activity.log`.

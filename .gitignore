@@ -13,9 +13,11 @@ __pycache__/
 .venv/
 venv/
 
-# Nyx local databases and temporary scratchpads
+# Nyx local databases, logs and temporary scratchpads
 nyx/data/*.db
 nyx/data/*.db-journal
 nyx/data/*.db-wal
 nyx/data/*.db-shm
+nyx/logs/*.log
+nyx/logs/*.jsonl
 *.tmp
