@@ -1,0 +1,21 @@
+# Environment & Secrets
+.env
+.env*
+*.env
+
+# Architecture Document (Local only)
+kientruc.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Nyx local databases and temporary scratchpads
+nyx/data/*.db
+nyx/data/*.db-journal
+nyx/data/*.db-wal
+nyx/data/*.db-shm
+*.tmp

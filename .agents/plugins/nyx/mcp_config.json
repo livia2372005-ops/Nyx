@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "nyx-memory": {
+      "command": "python",
+      "args": ["nyx/mcp_server/server.py"]
+    }
+  }
+}
